@@ -1,8 +1,6 @@
 # GorillaLoco++
 GorillaLoco++ is a Unity Project with Gorilla Tag locomotion based off of [GorillaLocomotion](https://github.com/Another-Axiom/GorillaLocomotion) created by [Kerestell](https://github.com/Kerestell), now under the [Another Axiom](https://github.com/Another-Axiom/GorillaLocomotion) organization.
 
-<img src="https://github.com/baggZ-idk/GorillaLocoPlusPlus/edit/main/README.md" width=64% height=auto>
-
 ## About the Locomotion
 The locomotion used in GorillaLoco++ as mentioned prior is based off of [GorillaLocomotion](https://github.com/Another-Axiom/GorillaLocomotion), albeit an updated version of the locomotion from April 2022. This locomotion introduces all-new mechanics such as tap sounds when you touch objects, and slippery surfaces such as ice, but it also includes updates and fixes to make it better to use for the player.
 
