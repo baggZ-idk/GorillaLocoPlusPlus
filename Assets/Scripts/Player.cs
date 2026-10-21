@@ -147,7 +147,7 @@ namespace GorillaLocomotion
 
         public void FixedUpdate()
         {
-            if ((headFollower.transform.position - lastHeadPosition).magnitude >= teleportThresholdNoVel + playerRigidBody.velocity.magnitude * calcDeltaTime) transform.position = transform.position + lastHeadPosition - headFollower.transform.position;
+            if ((headFollower.transform.position - lastHeadPosition).magnitude >= teleportThresholdNoVel + playerRigidBody.linearVelocity.magnitude * calcDeltaTime) transform.position = transform.position + lastHeadPosition - headFollower.transform.position;
         }
 
         public void BodyCollider()
@@ -184,6 +184,12 @@ namespace GorillaLocomotion
             tempRealTime = Time.realtimeSinceStartup;
             calcDeltaTime = tempRealTime - lastRealTime;
             lastRealTime = tempRealTime;
+
+            if (bounceReleaseTimer > 0f)
+            {
+                bounceReleaseTimer -= Time.deltaTime;
+            }
+
             if (calcDeltaTime > 0.1f)
             {
                 calcDeltaTime = 0.05f;
@@ -286,29 +292,29 @@ namespace GorillaLocomotion
                 }
                 if (!wasLeftHandSlide && !wasRightHandSlide)
                 {
-                    slideAverage = ((Vector3.Dot(playerRigidBody.velocity, slideAverageNormal) <= 0f) ? Vector3.ProjectOnPlane(playerRigidBody.velocity, slideAverageNormal) : playerRigidBody.velocity);
+                    slideAverage = ((Vector3.Dot(playerRigidBody.linearVelocity, slideAverageNormal) <= 0f) ? Vector3.ProjectOnPlane(playerRigidBody.linearVelocity, slideAverageNormal) : playerRigidBody.linearVelocity);
                 }
                 else
                 {
                     slideAverage = ((Vector3.Dot(slideAverage, slideAverageNormal) <= 0f) ? Vector3.ProjectOnPlane(slideAverage, slideAverageNormal) : slideAverage);
                 }
                 slideAverage = slideAverage.normalized * Mathf.Min(slideAverage.magnitude, Mathf.Max(0.5f, denormalizedVelocityAverage.magnitude * 2f));
-                playerRigidBody.velocity = Vector3.zero;
+                playerRigidBody.linearVelocity = Vector3.zero;
             }
             else if (leftHandColliding || rightHandColliding)
             {
                 if (!didATurn)
                 {
-                    playerRigidBody.velocity = Vector3.zero;
+                    playerRigidBody.linearVelocity = Vector3.zero;
                 }
                 else
                 {
-                    playerRigidBody.velocity = playerRigidBody.velocity.normalized * Mathf.Min(2f, playerRigidBody.velocity.magnitude);
+                    playerRigidBody.linearVelocity = playerRigidBody.linearVelocity.normalized * Mathf.Min(2f, playerRigidBody.linearVelocity.magnitude);
                 }
             }
             else if (wasLeftHandSlide || wasRightHandSlide)
             {
-                playerRigidBody.velocity = ((Vector3.Dot(slideAverage, slideAverageNormal) <= 0f) ? Vector3.ProjectOnPlane(slideAverage, slideAverageNormal) : slideAverage);
+                playerRigidBody.linearVelocity = ((Vector3.Dot(slideAverage, slideAverageNormal) <= 0f) ? Vector3.ProjectOnPlane(slideAverage, slideAverageNormal) : slideAverage);
             }
 
             if ((rightHandColliding || leftHandColliding) && !disableMovement && !didATurn)
@@ -320,13 +326,34 @@ namespace GorillaLocomotion
                         leftHandSlide = false;
                         rightHandSlide = false;
                         didAJump = true;
-                        playerRigidBody.velocity = Mathf.Min(maxJumpSpeed, jumpMultiplier * Vector3.Project(denormalizedVelocityAverage, slideAverageNormal).magnitude) * slideAverageNormal.normalized + Vector3.ProjectOnPlane(slideAverage, slideAverageNormal);
+                        playerRigidBody.linearVelocity = Mathf.Min(maxJumpSpeed, jumpMultiplier * Vector3.Project(denormalizedVelocityAverage, slideAverageNormal).magnitude) * slideAverageNormal.normalized + Vector3.ProjectOnPlane(slideAverage, slideAverageNormal);
                     }
                 }
                 else if (denormalizedVelocityAverage.magnitude > velocityLimit)
                 {
                     didAJump = true;
-                    playerRigidBody.velocity = Mathf.Min(maxJumpSpeed, jumpMultiplier * denormalizedVelocityAverage.magnitude) * denormalizedVelocityAverage.normalized;
+                    playerRigidBody.linearVelocity = Mathf.Min(maxJumpSpeed, jumpMultiplier * denormalizedVelocityAverage.magnitude) * denormalizedVelocityAverage.normalized;
+                }
+            }
+
+            if (pendingBounce && !disableMovement && !didATurn)
+            {
+                bounceReleaseTimer = 0.15f;
+                Vector3 incomingVelocity = denormalizedVelocityAverage;
+                float normalVelocity = Vector3.Dot(
+                    incomingVelocity,
+                    pendingBounceNormal
+                );
+
+                if (normalVelocity < 0f)
+                {
+                    playerRigidBody.linearVelocity =
+                        incomingVelocity -
+                        (1f + pendingBouncePercentage) *
+                        normalVelocity *
+                        pendingBounceNormal;
+
+                    didAJump = true;
                 }
             }
 
@@ -395,45 +422,76 @@ namespace GorillaLocomotion
 
             leftHandTouching = IsHandTouching(true);
             rightHandTouching = IsHandTouching(false);
+
+            pendingBounce = false;
+            pendingBounceImpactSpeed = 0f;
         }
 
-        private void FirstHandIteration(Transform handTransform, Vector3 handOffset, Vector3 lastHandPosition, bool wasHandSlide, bool wasHandTouching, out Vector3 firstIteration, ref float handSlipPercentage, ref bool handSlide, ref Vector3 slideNormal, ref bool handColliding, ref int materialTouchIndex, ref Surface touchedOverride)
-        {
-            firstIteration = Vector3.zero;
-            distanceTraveled = CurrentHandPosition(handTransform, handOffset) - lastHandPosition;
+		private void FirstHandIteration(Transform handTransform, Vector3 handOffset, Vector3 lastHandPosition, bool wasHandSlide, bool wasHandTouching, out Vector3 firstIteration, ref float handSlipPercentage, ref bool handSlide, ref Vector3 slideNormal, ref bool handColliding, ref int materialTouchIndex, ref Surface touchedOverride)
+		{
+			firstIteration = Vector3.zero;
+			distanceTraveled = CurrentHandPosition(handTransform, handOffset) - lastHandPosition;
 
-            if (!didAJump && wasHandSlide && Vector3.Dot(slideNormal, Vector3.up) > 0f)
-            {
-                distanceTraveled += Vector3.Project(-slideAverageNormal * stickDepth, Vector3.down);
-            }
+			if (!didAJump && wasHandSlide && Vector3.Dot(slideNormal, Vector3.up) > 0f)
+			{
+				distanceTraveled += Vector3.Project(-slideAverageNormal * stickDepth, Vector3.down);
+			}
 
-            if (IterativeCollisionSphereCast(lastHandPosition, minimumRaycastDistance, distanceTraveled, out finalPosition, true, out slipPercentage, out tempHitInfo, false))
-            {
-                if (wasHandTouching && slipPercentage <= defaultSlideFactor)
+			if (IterativeCollisionSphereCast(lastHandPosition, minimumRaycastDistance, distanceTraveled, out finalPosition, true, out slipPercentage, out tempHitInfo, false))
+			{
+				if (!wasHandTouching && tempHitInfo.collider != null)
+				{
+					if (tempHitInfo.collider.TryGetComponent(out Surface bounceSurface))
+					{
+						Vector3 incomingVelocity = denormalizedVelocityAverage;
+						Vector3 rigidbodyVelocity = playerRigidBody.linearVelocity;
+
+						if (Vector3.Dot(rigidbodyVelocity, tempHitInfo.normal) < Vector3.Dot(incomingVelocity, tempHitInfo.normal))
+						{
+							incomingVelocity = rigidbodyVelocity;
+						}
+
+						float impactSpeed = -Vector3.Dot(incomingVelocity, tempHitInfo.normal);
+
+						if (bounceSurface.bouncePercentage > 0f &&
+							impactSpeed > 0f &&
+							(!pendingBounce || impactSpeed > pendingBounceImpactSpeed))
+						{
+							pendingBounce = true;
+							pendingBounceNormal = tempHitInfo.normal;
+							pendingBouncePercentage = bounceSurface.bouncePercentage;
+							pendingBounceImpactSpeed = impactSpeed;
+							pendingBounceIncomingVelocity = incomingVelocity;
+						}
+					}
+				}
+
+				if (wasHandTouching && slipPercentage <= defaultSlideFactor && bounceReleaseTimer <= 0f)
                 {
                     firstIteration = lastHandPosition - CurrentHandPosition(handTransform, handOffset);
                 }
-                else
-                {
-                    firstIteration = finalPosition - CurrentHandPosition(handTransform, handOffset);
-                }
-                handSlipPercentage = slipPercentage;
-                handSlide = (slipPercentage > iceThreshold);
-                slideNormal = tempHitInfo.normal;
-                handColliding = true;
-                materialTouchIndex = currentMaterialIndex;
-                touchedOverride = currentOverride;
+				else
+				{
+					firstIteration = finalPosition - CurrentHandPosition(handTransform, handOffset);
+				}
 
-                return;
-            }
+				handSlipPercentage = slipPercentage;
+				handSlide = (slipPercentage > iceThreshold);
+				slideNormal = tempHitInfo.normal;
+				handColliding = true;
+				materialTouchIndex = currentMaterialIndex;
+				touchedOverride = currentOverride;
 
-            handSlipPercentage = 0f;
-            handSlide = false;
-            slideNormal = Vector3.up;
-            handColliding = false;
-            materialTouchIndex = 0;
-            touchedOverride = null;
-        }
+				return;
+			}
+
+			handSlipPercentage = 0f;
+			handSlide = false;
+			slideNormal = Vector3.up;
+			handColliding = false;
+			materialTouchIndex = 0;
+			touchedOverride = null;
+		}
 
         public void StartVibration(bool forLeftController, float amplitude, float duration)
         {
@@ -755,5 +813,12 @@ namespace GorillaLocomotion
         private RaycastHit emptyHit;
         private int bufferCount;
         private Vector3 lastOpenHeadPosition;
+        
+        private Vector3 pendingBounceIncomingVelocity;
+        private bool pendingBounce;
+        private Vector3 pendingBounceNormal;
+        private float pendingBouncePercentage;
+        private float pendingBounceImpactSpeed;
+        private float bounceReleaseTimer = 0f;
     }
 }
