@@ -11,6 +11,10 @@ The project used for GorillaLoco++ is already ready for Virtual Reality for Ocul
 
 ## Attribution
 If anything, please credit [Kerestell](https://github.com/Kerestell) for [GorillaLocomotion](https://github.com/Another-Axiom/GorillaLocomotion), and if you prefer credit me for this project, although under no means is that last part needed.
+
+## Forking
+All I ask of anyone forking this repository is please continue the chain of "Plus"/"+", for example a fork of GorillaLocoPlusPlus would be called GorillaLocoPlusPlusPlus
+
 ```
 MIT License
 
