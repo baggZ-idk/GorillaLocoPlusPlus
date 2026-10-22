@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR;
 
@@ -30,6 +31,7 @@ namespace GorillaLocomotion
         [Header("Audio")]
         public AudioSource leftTapSource;
         public AudioSource rightTapSource;
+        public Sounds sounds;
 
         [Space]
         public AudioSource leftSlipSource;
@@ -150,13 +152,19 @@ namespace GorillaLocomotion
             if ((headFollower.transform.position - lastHeadPosition).magnitude >= teleportThresholdNoVel + playerRigidBody.linearVelocity.magnitude * calcDeltaTime) transform.position = transform.position + lastHeadPosition - headFollower.transform.position;
         }
 
+        private float GetBouncePercentage(RaycastHit hit)
+        {
+            PhysicsMaterial material = hit.collider != null ? hit.collider.sharedMaterial : null;
+            return material != null ? Mathf.Clamp01(material.bounciness) : 0f;
+        }
+
         public void BodyCollider()
         {
             if (MaxSphereSizeForNoOverlap(bodyInitialRadius, PositionWithOffset(headCollider.transform, bodyOffset), out bodyMaxRadius))
             {
                 bodyCollider.radius = bodyMaxRadius;
                 bodyCollider.height = Physics.SphereCast(PositionWithOffset(headCollider.transform, bodyOffset), bodyMaxRadius, Vector3.down, out bodyHitInfo, bodyInitialHeight - bodyMaxRadius, locomotionEnabledLayers) ? (bodyHitInfo.distance + bodyMaxRadius) : bodyInitialHeight;
-                
+
                 if (!bodyCollider.gameObject.activeSelf) bodyCollider.gameObject.SetActive(true);
             }
             else bodyCollider.gameObject.SetActive(false);
@@ -339,11 +347,8 @@ namespace GorillaLocomotion
             if (pendingBounce && !disableMovement && !didATurn)
             {
                 bounceReleaseTimer = 0.15f;
-                Vector3 incomingVelocity = denormalizedVelocityAverage;
-                float normalVelocity = Vector3.Dot(
-                    incomingVelocity,
-                    pendingBounceNormal
-                );
+                Vector3 incomingVelocity = pendingBounceIncomingVelocity;
+                float normalVelocity = Vector3.Dot(incomingVelocity, pendingBounceNormal);
 
                 if (normalVelocity < 0f)
                 {
@@ -355,6 +360,9 @@ namespace GorillaLocomotion
 
                     didAJump = true;
                 }
+
+                pendingBounce = false;
+                pendingBounceImpactSpeed = 0f;
             }
 
             if (leftHandColliding && (CurrentLeftHandPosition() - lastLeftHandPosition).magnitude > unStickDistance && !Physics.Raycast(headFollower.transform.position, (CurrentLeftHandPosition() - headFollower.transform.position).normalized, out hitInfo, (CurrentLeftHandPosition() - headFollower.transform.position).magnitude, locomotionEnabledLayers.value))
@@ -378,11 +386,12 @@ namespace GorillaLocomotion
             didATurn = false;
             BodyCollider();
 
-            if (!IsHandSliding(true) && IsHandTouching(true) && !leftHandTouching && Time.time > lastLeftTap + tapCoolDown)
+            if (!IsHandSliding(true) && IsHandTouching(true) && leftTapArmed && Time.time > lastLeftTap + tapCoolDown)
             {
-                leftTapSource.Play();
+                PlayHandTap(leftTapSource, leftHandTapMaterial);
                 StartVibration(true, tapHapticStrength, tapHapticDuration);
                 lastLeftTap = Time.time;
+                leftTapArmed = false;
             }
             else if (IsHandSliding(true))
             {
@@ -399,11 +408,12 @@ namespace GorillaLocomotion
                 leftSlipSource.Stop();
             }
 
-            if (!IsHandSliding(false) && IsHandTouching(false) && !rightHandTouching && Time.time > lastRightTap + tapCoolDown)
+            if (!IsHandSliding(false) && IsHandTouching(false) && rightTapArmed && Time.time > lastRightTap + tapCoolDown)
             {
-                rightTapSource.Play();
+                PlayHandTap(rightTapSource, rightHandTapMaterial);
                 StartVibration(false, tapHapticStrength, tapHapticDuration);
                 lastRightTap = Time.time;
+                rightTapArmed = false;
             }
             else if (Instance.IsHandSliding(false))
             {
@@ -423,75 +433,163 @@ namespace GorillaLocomotion
             leftHandTouching = IsHandTouching(true);
             rightHandTouching = IsHandTouching(false);
 
-            pendingBounce = false;
-            pendingBounceImpactSpeed = 0f;
+            if (!IsHandTouching(true))
+            {
+                if (leftTapReleaseTime == 0f)
+                    leftTapReleaseTime = Time.time;
+
+            if (Time.time - leftTapReleaseTime >= tapReleaseDelay)
+                leftTapArmed = true;
+            }
+            else
+            {
+                leftTapReleaseTime = 0f;
+            }
+
+            if (!IsHandTouching(false))
+            {
+                if (rightTapReleaseTime == 0f)
+                    rightTapReleaseTime = Time.time;
+
+                if (Time.time - rightTapReleaseTime >= tapReleaseDelay)
+                    rightTapArmed = true;
+            }
+            else
+            {
+                rightTapReleaseTime = 0f;
+            }
         }
 
-		private void FirstHandIteration(Transform handTransform, Vector3 handOffset, Vector3 lastHandPosition, bool wasHandSlide, bool wasHandTouching, out Vector3 firstIteration, ref float handSlipPercentage, ref bool handSlide, ref Vector3 slideNormal, ref bool handColliding, ref int materialTouchIndex, ref Surface touchedOverride)
-		{
-			firstIteration = Vector3.zero;
-			distanceTraveled = CurrentHandPosition(handTransform, handOffset) - lastHandPosition;
+        private void FirstHandIteration(Transform handTransform, Vector3 handOffset, Vector3 lastHandPosition, bool wasHandSlide, bool wasHandTouching, out Vector3 firstIteration, ref float handSlipPercentage, ref bool handSlide, ref Vector3 slideNormal, ref bool handColliding, ref int materialTouchIndex, ref Surface touchedOverride)
+        {
+            firstIteration = Vector3.zero;
+            distanceTraveled = CurrentHandPosition(handTransform, handOffset) - lastHandPosition;
 
-			if (!didAJump && wasHandSlide && Vector3.Dot(slideNormal, Vector3.up) > 0f)
-			{
-				distanceTraveled += Vector3.Project(-slideAverageNormal * stickDepth, Vector3.down);
-			}
+            if (!didAJump && wasHandSlide && Vector3.Dot(slideNormal, Vector3.up) > 0f)
+            {
+                distanceTraveled += Vector3.Project(-slideAverageNormal * stickDepth, Vector3.down);
+            }
 
-			if (IterativeCollisionSphereCast(lastHandPosition, minimumRaycastDistance, distanceTraveled, out finalPosition, true, out slipPercentage, out tempHitInfo, false))
-			{
-				if (!wasHandTouching && tempHitInfo.collider != null)
-				{
-					if (tempHitInfo.collider.TryGetComponent(out Surface bounceSurface))
-					{
-						Vector3 incomingVelocity = denormalizedVelocityAverage;
-						Vector3 rigidbodyVelocity = playerRigidBody.linearVelocity;
+            if (IterativeCollisionSphereCast(lastHandPosition, minimumRaycastDistance, distanceTraveled, out finalPosition, true, out slipPercentage, out tempHitInfo, false))
+            {
+                if (handTransform == leftController) leftHandTapMaterial = currentMaterial;
+                else rightHandTapMaterial = currentMaterial;
 
-						if (Vector3.Dot(rigidbodyVelocity, tempHitInfo.normal) < Vector3.Dot(incomingVelocity, tempHitInfo.normal))
-						{
-							incomingVelocity = rigidbodyVelocity;
-						}
+                if (!wasHandTouching && tempHitInfo.collider != null)
+                {
+                    float bouncePercentage = GetBouncePercentage(tempHitInfo);
 
-						float impactSpeed = -Vector3.Dot(incomingVelocity, tempHitInfo.normal);
+                    if (bouncePercentage > 0f)
+                    {
+                        Vector3 incomingVelocity = denormalizedVelocityAverage;
+                        Vector3 rigidbodyVelocity = playerRigidBody.linearVelocity;
 
-						if (bounceSurface.bouncePercentage > 0f &&
-							impactSpeed > 0f &&
-							(!pendingBounce || impactSpeed > pendingBounceImpactSpeed))
-						{
-							pendingBounce = true;
-							pendingBounceNormal = tempHitInfo.normal;
-							pendingBouncePercentage = bounceSurface.bouncePercentage;
-							pendingBounceImpactSpeed = impactSpeed;
-							pendingBounceIncomingVelocity = incomingVelocity;
-						}
-					}
-				}
+                        if (Vector3.Dot(rigidbodyVelocity, tempHitInfo.normal) < Vector3.Dot(incomingVelocity, tempHitInfo.normal))
+                        {
+                            incomingVelocity = rigidbodyVelocity;
+                        }
 
-				if (wasHandTouching && slipPercentage <= defaultSlideFactor && bounceReleaseTimer <= 0f)
+                        float impactSpeed = -Vector3.Dot(incomingVelocity, tempHitInfo.normal);
+
+                        if (impactSpeed > 0f &&
+                            (!pendingBounce || impactSpeed > pendingBounceImpactSpeed))
+                        {
+                            pendingBounce = true;
+                            pendingBounceNormal = tempHitInfo.normal;
+                            pendingBouncePercentage = bouncePercentage;
+                            pendingBounceImpactSpeed = impactSpeed;
+                            pendingBounceIncomingVelocity = incomingVelocity;
+                        }
+                    }
+                }
+
+                if (wasHandTouching && slipPercentage <= defaultSlideFactor && bounceReleaseTimer <= 0f)
                 {
                     firstIteration = lastHandPosition - CurrentHandPosition(handTransform, handOffset);
                 }
-				else
-				{
-					firstIteration = finalPosition - CurrentHandPosition(handTransform, handOffset);
-				}
+                else
+                {
+                    firstIteration = finalPosition - CurrentHandPosition(handTransform, handOffset);
+                }
 
-				handSlipPercentage = slipPercentage;
-				handSlide = (slipPercentage > iceThreshold);
-				slideNormal = tempHitInfo.normal;
-				handColliding = true;
-				materialTouchIndex = currentMaterialIndex;
-				touchedOverride = currentOverride;
+                handSlipPercentage = slipPercentage;
+                handSlide = (slipPercentage > iceThreshold);
+                slideNormal = tempHitInfo.normal;
+                handColliding = true;
+                materialTouchIndex = currentMaterialIndex;
+                touchedOverride = currentOverride;
 
-				return;
-			}
+                return;
+            }
 
-			handSlipPercentage = 0f;
-			handSlide = false;
-			slideNormal = Vector3.up;
-			handColliding = false;
-			materialTouchIndex = 0;
-			touchedOverride = null;
-		}
+            handSlipPercentage = 0f;
+            handSlide = false;
+            slideNormal = Vector3.up;
+            handColliding = false;
+            materialTouchIndex = 0;
+            touchedOverride = null;
+        }
+
+        private void PlayHandTap(AudioSource source, Material material)
+        {
+            if (source == null) return;
+
+            AudioClip clip = sounds != null ? sounds.GetSound(material) : null;
+
+            if (clip != null) source.PlayOneShot(clip);
+            else if (source.clip != null) source.Play();
+        }
+
+        private Material ResolveSurfaceMaterial(RaycastHit hit)
+        {
+            Collider col = hit.collider;
+            if (col == null) return null;
+
+            if (!rendererCache.TryGetValue(col, out Renderer rend))
+            {
+                rend = col.GetComponent<Renderer>();
+                if (rend == null) rend = col.GetComponentInParent<Renderer>();
+                rendererCache[col] = rend;
+            }
+            if (rend == null) return null;
+
+            rend.GetSharedMaterials(sharedMatsBuffer);
+            if (sharedMatsBuffer.Count == 0) return null;
+            if (sharedMatsBuffer.Count == 1) return sharedMatsBuffer[0];
+
+            MeshCollider meshCol = col as MeshCollider;
+            if (meshCol == null || meshCol.sharedMesh == null) return sharedMatsBuffer[0];
+
+            int tri = hit.triangleIndex;
+            if (tri < 0)
+            {
+                if (Physics.Raycast(hit.point + hit.normal * 0.02f, -hit.normal, out RaycastHit rayHit, 0.05f, locomotionEnabledLayers.value, QueryTriggerInteraction.Ignore) && rayHit.collider == col)
+                {
+                    tri = rayHit.triangleIndex;
+                }
+            }
+            if (tri < 0) return sharedMatsBuffer[0];
+
+            Mesh mesh = meshCol.sharedMesh;
+            int indexPos = tri * 3;
+            int subCount = Mathf.Min(mesh.subMeshCount, sharedMatsBuffer.Count);
+
+            for (int i = 0; i < subCount; i++)
+            {
+                var sm = mesh.GetSubMesh(i);
+                if (indexPos >= sm.indexStart && indexPos < sm.indexStart + sm.indexCount)
+                {
+                    return sharedMatsBuffer[i];
+                }
+            }
+
+            return sharedMatsBuffer[0];
+        }
+
+        public void ClearSurfaceCache()
+        {
+            rendererCache.Clear();
+        }
 
         public void StartVibration(bool forLeftController, float amplitude, float duration)
         {
@@ -522,6 +620,9 @@ namespace GorillaLocomotion
 
             if (IterativeCollisionSphereCast(lastHandPosition, minimumRaycastDistance, distanceTraveled, out finalPosition, bothTouching, out slipPercentage, out junkHit, false))
             {
+                if (handTransform == leftController) leftHandTapMaterial = currentMaterial;
+                else if (handTransform == rightController) rightHandTapMaterial = currentMaterial;
+
                 handColliding = true;
                 handSlide = (slipPercentage > iceThreshold);
                 materialTouchIndex = currentMaterialIndex;
@@ -535,43 +636,39 @@ namespace GorillaLocomotion
         private bool IterativeCollisionSphereCast(Vector3 startPosition, float sphereRadius, Vector3 movementVector, out Vector3 endPosition, bool singleHand, out float slipPercentage, out RaycastHit iterativeHitInfo, bool fullSlide)
         {
             slipPercentage = defaultSlideFactor;
+            currentMaterial = null;
 
             if (!CollisionsSphereCast(startPosition, sphereRadius, movementVector, out endPosition, out tempIterativeHit))
             {
                 iterativeHitInfo = tempIterativeHit;
                 endPosition = Vector3.zero;
-
                 return false;
             }
 
             firstPosition = endPosition;
             iterativeHitInfo = tempIterativeHit;
+            currentMaterial = ResolveSurfaceMaterial(tempIterativeHit);
             slideFactor = GetSlidePercentage(iterativeHitInfo);
             slipPercentage = (slideFactor != defaultSlideFactor) ? slideFactor : ((!singleHand) ? defaultSlideFactor : 0.001f);
 
             if (fullSlide)
-            {
                 slipPercentage = 1f;
-            }
 
             movementToProjectedAboveCollisionPlane = Vector3.ProjectOnPlane(startPosition + movementVector - firstPosition, iterativeHitInfo.normal) * slipPercentage;
 
             if (CollisionsSphereCast(firstPosition, sphereRadius, movementToProjectedAboveCollisionPlane, out endPosition, out tempIterativeHit))
             {
                 iterativeHitInfo = tempIterativeHit;
-
                 return true;
             }
 
             if (CollisionsSphereCast(movementToProjectedAboveCollisionPlane + firstPosition, sphereRadius, startPosition + movementVector - (movementToProjectedAboveCollisionPlane + firstPosition), out endPosition, out tempIterativeHit))
             {
                 iterativeHitInfo = tempIterativeHit;
-
                 return true;
             }
 
             endPosition = Vector3.zero;
-
             return false;
         }
 
@@ -579,6 +676,7 @@ namespace GorillaLocomotion
         {
             MaxSphereSizeForNoOverlap(sphereRadius, startPosition, out maxSphereSize1);
             ClearRaycasthitBuffer(ref rayCastNonAllocColliders);
+
             bufferCount = Physics.SphereCastNonAlloc(startPosition, maxSphereSize1, movementVector.normalized, rayCastNonAllocColliders, movementVector.magnitude, locomotionEnabledLayers.value);
 
             if (bufferCount > 0)
@@ -679,11 +777,12 @@ namespace GorillaLocomotion
 
         public float GetSlidePercentage(RaycastHit raycastHit)
         {
-            if (raycastHit.collider.gameObject.TryGetComponent(out currentOverride))
-            {
-                return currentOverride.slipPercentage <= defaultSlideFactor ? defaultSlideFactor : currentOverride.slipPercentage;
-            }
-            return defaultSlideFactor;
+            PhysicsMaterial material = raycastHit.collider != null ? raycastHit.collider.sharedMaterial : null;
+
+            if (material == null)
+                return defaultSlideFactor;
+
+            return 1f - Mathf.Clamp01(material.staticFriction / 2f);
         }
 
         public void Turn(float degrees)
@@ -770,8 +869,20 @@ namespace GorillaLocomotion
             }
         }
 
+        private Material currentMaterial;
+        private readonly List<Material> sharedMatsBuffer = new List<Material>(8);
+        private readonly Dictionary<Collider, Renderer> rendererCache = new Dictionary<Collider, Renderer>();
+
+        private Material leftHandTapMaterial, rightHandTapMaterial;
         private bool leftHandTouching, rightHandTouching;
         private float lastLeftTap, lastRightTap;
+        private bool leftTapArmed = true;
+        private bool rightTapArmed = true;
+
+        private float leftTapReleaseTime;
+        private float rightTapReleaseTime;
+
+        private const float tapReleaseDelay = 0.04f;
         private float bodyInitialRadius, bodyInitialHeight;
         private RaycastHit bodyHitInfo;
         private Vector3 lastLeftHandPosition, lastRightHandPosition, lastHeadPosition;
@@ -813,12 +924,18 @@ namespace GorillaLocomotion
         private RaycastHit emptyHit;
         private int bufferCount;
         private Vector3 lastOpenHeadPosition;
-        
+
         private Vector3 pendingBounceIncomingVelocity;
         private bool pendingBounce;
         private Vector3 pendingBounceNormal;
         private float pendingBouncePercentage;
         private float pendingBounceImpactSpeed;
         private float bounceReleaseTimer = 0f;
+    }
+
+    public class Surface : MonoBehaviour
+    {
+        public float slipPercentage;
+        public float bouncePercentage;
     }
 }
