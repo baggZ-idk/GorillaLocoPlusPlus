@@ -378,7 +378,9 @@ namespace GorillaLocomotion
             }
 
             leftFollower.position = lastLeftHandPosition;
+            leftFollower.rotation = leftController.rotation;
             rightFollower.position = lastRightHandPosition;
+            rightFollower.rotation = rightController.rotation;
             wasLeftHandTouching = leftHandColliding;
             wasRightHandTouching = rightHandColliding;
             wasLeftHandSlide = leftHandSlide;

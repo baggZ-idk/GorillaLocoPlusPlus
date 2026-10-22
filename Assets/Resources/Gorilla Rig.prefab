@@ -685,7 +685,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b9decdb2d948d3bc491e6b77cff83f7d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  Surfaces: []
+  Surfaces:
+  - Materials:
+    - {fileID: 2100000, guid: c74b7bab54285ccb4925a53a2da83750, type: 2}
+    Sounds:
+    - {fileID: 8300000, guid: 4536445990d95aecbbbf6a97edb0173b, type: 3}
   DefaultSounds: []
 --- !u!114 &4818827953612837350
 MonoBehaviour:
@@ -1012,7 +1016,7 @@ AudioSource:
   m_audioClip: {fileID: 0}
   m_Resource: {fileID: 8300000, guid: 86ba85d25a1fb44499d98b7cf8157a61, type: 3}
   m_PlayOnAwake: 0
-  m_Volume: 0.025
+  m_Volume: 1
   m_Pitch: 1
   Loop: 1
   Mute: 0
@@ -1284,7 +1288,7 @@ AudioSource:
   m_audioClip: {fileID: 0}
   m_Resource: {fileID: 8300000, guid: 86ba85d25a1fb44499d98b7cf8157a61, type: 3}
   m_PlayOnAwake: 0
-  m_Volume: 0.025
+  m_Volume: 1
   m_Pitch: 1
   Loop: 1
   Mute: 0
